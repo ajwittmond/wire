@@ -1,0 +1,11 @@
+[package]
+name = "wire"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace]
+members = ["derive_wire"]
+
+[dependencies]
+derive_wire = {path = "derive_wire"}
