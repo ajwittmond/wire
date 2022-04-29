@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+extern crate derive_wire;
+
+use derive_wire::react_traits;
 use std::ops::{Mul,Add,Sub,Div,Index,Neg,Not,BitAnd,BitOr,BitXor,Deref,Shl,Shr,Rem};
 use std::time::{Duration,Instant};
 
@@ -84,7 +87,7 @@ impl<E> Event<E>{
 
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, react_traits)]
 struct Func<F>(F);
 impl<I, O, F: Fn(I, Duration) -> O> React<I> for Func<F> {
     type Output = O;
@@ -376,6 +379,11 @@ struct BitwiseXor<T1,T2>(T1,T2);
 reactive_bin_op!(BitwiseXor BitXor ^);
 
 
+#[derive(Debug, Copy, Clone)]
+struct BitwiseNot<T>(T);
+reactive_un_op!(BitwiseNot Not !);
+
+
 pub enum StepType{
     Discrete,
     Continuous
@@ -459,5 +467,11 @@ mod tests {
     #[test]
     fn test_composed(){
         assert_eq!(13, Composed(Func(|x,_| x+ 1), Integrate{integrand: 6, acc: 0}).react((),Duration::from_secs(2)))
+    }
+
+    #[test]
+    fn test_add(){
+        assert_eq!(3,(Func(|x,_| x+1) + 1).react(1,Duration::new(0,0)));
+
     }
 }
