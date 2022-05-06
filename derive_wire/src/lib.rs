@@ -41,47 +41,28 @@ pub fn react_traits(input: TokenStream) -> TokenStream{
         (quote!{BitOr},quote!{BitwiseOr},quote!{bitor}),
         (quote!{BitXor},quote!{BitwiseXor},quote!{bitxor}),
     ].into_iter().map(|(t1,t2,t3)| simple_binary_trait(t1,t2,t3)).collect();
-    
+
 
     quote!{
         #(#simple_binary_traits) *
 
-        impl<Other,#(#generic_list),*> Index<Other> for #ident<#(#generic_list),*>
-        where #ident<#(#generic_list),*> : Clone{
-            type Output = Ix<self>;
+        impl<#(#generic_list),*> Neg for #ident<#(#generic_list),*> {
+            type Output = Negation<Self>;
 
-            fn index(&self, other: other) -> &Self::Output {
-                Ix<self.clone(),other>
+            fn neg(self) -> Self::Output{
+                Negation(self)
             }
+
         }
 
-        // impl<#(#generic_list),*> Deref for #ident<#(#generic_list),*>
-        // where  #ident<#(#generic_list),*> : Clone{
 
-        //     type Target = Dereference<Self>;
+        impl<#(#generic_list),*> Not for #ident<#(#generic_list),*> {
+            type Output = BitwiseNot<Self>;
 
-        //     fn deref(&self) -> &Self::Target {
-        //        Deref(self.clone())
-        //     }
-        // }
-
-        // impl<#(#generic_list),*> Neg for #ident<#(#generic_list),*> {
-        //     type Output = Negations<Self>;
-
-        //     fn neg(self) -> Self::Output{
-        //         Negations(self)
-        //     }
-
-        // }
-
-
-        // impl<#(#generic_list),*> Not for #ident<#(#generic_list),*> {
-        //     type Output = BitwiseNot<Self>;
-
-        //     fn not(self) -> Self::Output {
-        //         BitwiseNot(self)
-        //     }
-        // }
+            fn not(self) -> Self::Output {
+                BitwiseNot(self)
+            }
+        }
 
     }.into()
 }
