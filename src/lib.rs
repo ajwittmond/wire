@@ -6,8 +6,6 @@ use std::marker::PhantomData;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Deref, Div, Index, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 use std::time::{Duration, Instant};
 
-
-
 pub trait Rebind<E> {
     type Type;
 }
@@ -33,13 +31,11 @@ pub trait React: Sized + Startable {
     fn react(&mut self, input: Self::Input, time: Duration) -> Self::Output;
 }
 
-pub trait IntoReactive<Input>{
-    type Reactive : React<Input=Input>;
+pub trait IntoReactive<Input>: Sized {
+    type Reactive: React<Input = Input>;
 
     fn into_reactive(self) -> Self::Reactive;
-}
 
-pub trait ReactFunctions: Startable + Sized {
     fn after(self) {
         todo!()
     }
@@ -52,67 +48,95 @@ pub trait ReactFunctions: Startable + Sized {
         todo!()
     }
 
-    fn fors<T: Into<f64>>(self, seconds: T) -> ForS<Self> {
+    fn fors<T: Into<f64>>(self, seconds: T) -> ForS<Self::Reactive> {
         ForS {
             duration: Duration::from_secs_f64(seconds.into()),
             start_time: Duration::ZERO,
-            wire: self,
+            wire: self.into_reactive(),
         }
     }
 
-    fn to<R>(self, other: R) -> Composed<Self, R> {
-        Composed(self, other)
+    fn to<R>(self, other: R) -> Composed<R, Self::Reactive>
+    where
+        R: React<Output = <Self::Reactive as React>::Input>,
+    {
+        Composed(other, self.into_reactive())
     }
 
-    fn then<R>(self, other: R) -> Then<Self, R> {
+    fn then<R>(self, other: R) -> Then<Self::Reactive, R>
+    where
+        R: React<
+            Input = <Self::Reactive as React>::Input,
+            Output = <Self::Reactive as React>::Output,
+        >,
+        <Self::Reactive as React>::Output: EventCarrier,
+    {
         Then {
-            wire1: self,
+            wire1: self.into_reactive(),
             wire2: other,
             switched: false,
         }
     }
 
-    fn wloop(self) -> WLoop<Self>
+    fn wloop(self) -> WLoop<Self::Reactive>
     where
-        Self: Clone,
+        Self::Reactive: Clone,
+        <Self::Reactive as React>::Output: EventCarrier,
     {
+        let reactive = self.into_reactive();
         WLoop {
-            initial_state: self.clone(),
-            wire: self,
+            initial_state: reactive.clone(),
+            wire: reactive,
         }
+    }
+
+    fn wmap<F, Out>(
+        self,
+        func: F,
+    ) -> Composed<Func<<Self::Reactive as React>::Output, F>, Self::Reactive>
+    where
+        F: Fn(<Self::Reactive as React>::Output) -> Out,
+    {
+        Composed(
+            Func {
+                phantom: PhantomData,
+                func: func,
+            },
+            self.into_reactive(),
+        )
     }
 }
 
 pub fn at() {}
 
-pub fn wloop<R: ReactFunctions + Clone>(reactive: R) -> WLoop<R> {
+pub fn wloop<R, I>(reactive: R) -> WLoop<R::Reactive>
+where
+    R: IntoReactive<I>,
+    R::Reactive: Clone,
+    <R::Reactive as React>::Output: EventCarrier,
+{
     reactive.wloop()
 }
 
-pub fn fors<R: ReactFunctions, T: Into<f64>>(duration: T, reactive: R) -> ForS<R> {
-    reactive.fors(duration)
+pub fn fors<I, R: IntoReactive<I>, T: Into<f64>>(seconds: T, reactive: R) -> ForS<R::Reactive> {
+    reactive.fors(seconds)
 }
-
-impl<A: Startable + Sized> ReactFunctions for A {}
-
-
 
 #[derive(Debug, Copy, Clone, react_traits)]
-pub struct Const<Input,Data>{
-    phantom_input : PhantomData<Input>,
-    pub data : Data
+pub struct Const<Input, Data> {
+    phantom_input: PhantomData<Input>,
+    pub data: Data,
 }
 
-impl<Input,Data> Startable for Const<Input,Data>{}
-impl<Input,Data : Clone> React for Const<Input,Data>{
+impl<Input, Data> Startable for Const<Input, Data> {}
+impl<Input, Data: Clone> React for Const<Input, Data> {
     type Input = Input;
     type Output = Data;
 
-    fn react(&mut self, _in : Input, _time: Duration) -> Data{
+    fn react(&mut self, _in: Input, _time: Duration) -> Data {
         self.data.clone()
     }
 }
-
 
 // impl<I,E,C : Copy> React<I,E> for C {
 //     type Output = C;
@@ -135,7 +159,22 @@ macro_rules! copy_into_react_impls{
     }
 }
 
-copy_into_react_impls![String, & 'static str, char, i8, i16, i32, i64, f32, f64, u8, u16, u32, u64, bool];
+copy_into_react_impls![
+    String,
+    &'static str,
+    char,
+    i8,
+    i16,
+    i32,
+    i64,
+    f32,
+    f64,
+    u8,
+    u16,
+    u32,
+    u64,
+    bool
+];
 
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub struct EventValue<E> {
@@ -186,12 +225,27 @@ impl<E1> FMap<E1> for Event<E1> {
 }
 
 #[derive(Debug, Copy, Clone, react_traits)]
-pub struct Func<I , F > {
+pub struct Func<I, F> {
     pub phantom: PhantomData<I>,
     pub func: F,
 }
 impl<I, F> Startable for Func<I, F> {}
-impl<I, O, F: Fn(I, Duration) -> O> React for Func<I, F> {
+impl<I, O, F: Fn(I) -> O> React for Func<I, F> {
+    type Input = I;
+    type Output = O;
+
+    fn react(&mut self, input: I, time: Duration) -> Self::Output {
+        (self.func)(input)
+    }
+}
+
+#[derive(Debug, Copy, Clone, react_traits)]
+pub struct PureFunc<I, F> {
+    pub phantom: PhantomData<I>,
+    pub func: F,
+}
+impl<I, F> Startable for PureFunc<I, F> {}
+impl<I, O, F: Fn(I, Duration) -> O> React for PureFunc<I, F> {
     type Input = I;
     type Output = O;
 
@@ -446,6 +500,14 @@ pub trait EventCarrier: Sized {
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 pub struct EventAndValue<ValueType, EventType>(pub ValueType, pub Event<EventType>);
+impl<E, V1, V2> Rebind<V2> for EventAndValue<V1, E> {
+    type Type = EventAndValue<V2, E>;
+}
+impl<E, V1> FMap<V1> for EventAndValue<V1, E> {
+    fn fmap<V2, F: FnOnce(V1) -> V2>(self, func: F) -> <EventAndValue<V1, E> as Rebind<V2>>::Type {
+        EventAndValue(func(self.0), self.1)
+    }
+}
 
 impl<ValueType, EventType> EventCarrier for EventAndValue<ValueType, EventType> {
     type EventType = EventType;
@@ -766,11 +828,12 @@ pub struct Clock {
 }
 
 impl Clock {
-    pub fn run<W, F>(&self, mut reactive: W, callback: F)
+    pub fn run<W, F>(&self, mut reactive: W, mut callback: F)
     where
         W: React<Input = ()>,
-        F: Fn(W::Output) -> bool,
+        F: FnMut(W::Output) -> bool,
     {
+        let mut run_time = Duration::ZERO;
         let mut prev = Instant::now();
         let mut steps_waited = 0;
         reactive.start(Duration::ZERO);
@@ -782,13 +845,17 @@ impl Clock {
             let average_delta = delta / (steps_waited + 1);
             if delta + average_delta >= target_timestep {
                 prev = now;
+                run_time += delta;
 
-                let step = match self.step_type {
-                    StepType::Continuous => delta,
-                    StepType::Discrete => target_timestep,
+                let wire_time = match self.step_type {
+                    StepType::Continuous => run_time,
+                    StepType::Discrete => Duration::from_secs_f64(
+                        (run_time.as_secs_f64() / target_timestep.as_secs_f64()).floor()
+                            * target_timestep.as_secs_f64(),
+                    ),
                 };
 
-                let output = reactive.react((), step);
+                let output = reactive.react((), wire_time);
 
                 if !callback(output) {
                     break;
@@ -807,7 +874,10 @@ mod tests {
 
     #[test]
     fn test_const() {
-        assert_eq!(5, (5 as i32).into_reactive().react((), Duration::from_secs(1)))
+        assert_eq!(
+            5,
+            (5 as i32).into_reactive().react((), Duration::from_secs(1))
+        )
     }
 
     #[test]
@@ -832,7 +902,10 @@ mod tests {
 
     #[test]
     fn test_split() {
-        assert_eq!((5, 6), Split(5.into_reactive(), 6.into_reactive()).react((), Duration::new(0, 0)))
+        assert_eq!(
+            (5, 6),
+            Split(5.into_reactive(), 6.into_reactive()).react((), Duration::new(0, 0))
+        )
     }
 
     #[test]
@@ -855,7 +928,7 @@ mod tests {
     fn test_func() {
         assert_eq!(
             5,
-            Func {
+            PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x + 1
             }
@@ -868,11 +941,11 @@ mod tests {
         assert_eq!(
             (5, 6),
             FanOut(
-                Func {
+                PureFunc {
                     phantom: PhantomData,
                     func: |x, _| x + 1
                 },
-                Func {
+                PureFunc {
                     phantom: PhantomData,
                     func: |x, _| x - 1
                 }
@@ -891,7 +964,7 @@ mod tests {
         assert_eq!(
             13,
             Composed(
-                Func {
+                PureFunc {
                     phantom: PhantomData,
                     func: |x, _| x + 1
                 },
@@ -909,10 +982,10 @@ mod tests {
     fn test_add() {
         assert_eq!(
             3,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData::<i32>,
                 func: |x, _| x + 1
-            } + 1 )
+            } + 1)
                 .react(1, Duration::new(0, 0))
         );
     }
@@ -921,7 +994,7 @@ mod tests {
     fn test_sub() {
         assert_eq!(
             2,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x + 2
             } - 1)
@@ -933,7 +1006,7 @@ mod tests {
     fn test_mul() {
         assert_eq!(
             6,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x + 2
             } * 2)
@@ -945,7 +1018,7 @@ mod tests {
     fn test_div() {
         assert_eq!(
             3,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x + 5
             } / 2)
@@ -957,7 +1030,7 @@ mod tests {
     fn test_rem() {
         assert_eq!(
             2,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x + 5
             } % 4)
@@ -969,7 +1042,7 @@ mod tests {
     fn test_shl() {
         assert_eq!(
             2,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x + 3
             } >> 1)
@@ -981,7 +1054,7 @@ mod tests {
     fn test_shr() {
         assert_eq!(
             8,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x + 3
             } << 1)
@@ -993,7 +1066,7 @@ mod tests {
     fn test_bitand() {
         assert_eq!(
             false,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x > 3
             } & true)
@@ -1005,7 +1078,7 @@ mod tests {
     fn test_bitor() {
         assert_eq!(
             true,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x < 3
             } | false)
@@ -1017,7 +1090,7 @@ mod tests {
     fn test_xor() {
         assert_eq!(
             true,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x < 3
             } ^ false)
@@ -1025,7 +1098,7 @@ mod tests {
         );
         assert_eq!(
             false,
-            (Func {
+            (PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x < 3
             } ^ true)
@@ -1037,7 +1110,7 @@ mod tests {
     fn test_negation() {
         assert_eq!(
             -4,
-            (-Func {
+            (-PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x + 3
             })
@@ -1049,7 +1122,7 @@ mod tests {
     fn test_not() {
         assert_eq!(
             false,
-            (!Func {
+            (!PureFunc {
                 phantom: PhantomData,
                 func: |x, _| x < 3
             })
@@ -1171,5 +1244,20 @@ mod tests {
 
         let val4 = wloop.react((), Duration::from_secs_f32(4.5)); // go around in 1 step
         assert_eq!(val4, 2);
+    }
+
+    #[test]
+    fn test_wmap() {
+        let mut w1 = Pure("all!").wmap(|s| String::from("Hi ") + s);
+        let val1 = w1.react((), Duration::from_secs(0));
+
+        assert_eq!(val1, "Hi all!");
+
+        let val2 = "all!"
+            .into_reactive()
+            .wmap(|s| String::from("Hi ") + s)
+            .react((), Duration::from_secs(0));
+
+        assert_eq!(val2, "Hi all!");
     }
 }

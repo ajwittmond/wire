@@ -30,7 +30,7 @@ pub fn react_traits(input: TokenStream) -> TokenStream {
                         >::Reactive
                     >;
 
-                fn #fn_(self,other: Other) -> Self::Output{
+                fn #fn_(self,other: Other) -> <Self as #trait_<Other>>::Output{
                     #output_(self,other.into_reactive())
                 }
             }
